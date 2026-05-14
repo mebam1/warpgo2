@@ -142,6 +142,22 @@ def convert_states_b2w(frame_pos, frame_quat, p, quat, omega, nu):
     return p_world, quat_world, omega_world, nu_world
 
 @torch.jit.script
+def convert_free_states_com_w2b(frame_pos, frame_quat, p, quat, lin_vel, ang_vel):
+    p_body = transform_point_inverse(frame_pos, frame_quat, p)
+    quat_body = quat_mul(quat_inv(frame_quat), quat)
+    lin_vel_body = quat_rotate_inverse(frame_quat, lin_vel)
+    ang_vel_body = quat_rotate_inverse(frame_quat, ang_vel)
+    return p_body, quat_body, lin_vel_body, ang_vel_body
+
+@torch.jit.script
+def convert_free_states_com_b2w(frame_pos, frame_quat, p, quat, lin_vel, ang_vel):
+    p_world = transform_point(frame_pos, frame_quat, p)
+    quat_world = quat_mul(frame_quat, quat)
+    lin_vel_world = quat_rotate(frame_quat, lin_vel)
+    ang_vel_world = quat_rotate(frame_quat, ang_vel)
+    return p_world, quat_world, lin_vel_world, ang_vel_world
+
+@torch.jit.script
 def convert_angular_states_w2b(frame_quat, quat, omega):
     quat_body = quat_mul(quat_inv(frame_quat), quat)
     omega_body = quat_rotate_inverse(frame_quat, omega)

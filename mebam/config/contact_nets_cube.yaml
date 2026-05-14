@@ -1,0 +1,161 @@
+name: contact_nets_real_world_cube_tossing
+
+provenance:
+  source_repo: DAIRLab/contact-nets
+  task: real_world_cube_tossing
+  object: cube
+  mebam_sample_matches_contact_nets: true
+  sample_file: mebam/data/contact_nets/0.pt
+  sample_file_sha256: C5B971226BE0CE39EA877B5B72A6BCD5FE9CFB973ED1F5AAE9A19BFBD763A2F2
+
+dataset:
+  processed_toss_dir: mebam/data/contact_nets
+  local_processed_toss_count: 1
+  source_processed_toss_count: 570
+  file_format: torch_pt
+  sample_rate_hz: 148.0
+
+data_format:
+  tensor_shape: [1, T, 19]
+  fields:
+    position:
+      indices: [0, 2]
+      size: 3
+    quaternion_wxyz:
+      indices: [3, 6]
+      size: 4
+    linear_velocity:
+      indices: [7, 9]
+      size: 3
+    angular_velocity:
+      indices: [10, 12]
+      size: 3
+    control:
+      indices: [13, 18]
+      size: 6
+      note: zeros_after_release
+  units:
+    storage_space: normalized_by_block_half_width
+    block_half_width_m: 0.0524
+    recover_metric_position_velocity_multiplier: 0.0524
+
+physics_metric:
+  mass_kg: 0.37
+  inertia_kg_m2: 0.00081
+  friction_coefficient: 0.18
+  restitution: 0.125
+  gravity_mps2: 9.81
+  dt_s: 0.006756756756756757
+  cube_vertices_sign_order:
+    - [-1.0, -1.0, 1.0]
+    - [-1.0, -1.0, -1.0]
+    - [-1.0, 1.0, -1.0]
+    - [-1.0, 1.0, 1.0]
+    - [1.0, -1.0, 1.0]
+    - [1.0, -1.0, -1.0]
+    - [1.0, 1.0, -1.0]
+    - [1.0, 1.0, 1.0]
+
+physics_normalized:
+  length_scale: 19.083969465648856
+  gravity: 187.21374045801525
+  inertia: 0.2950002913583124
+  vertices:
+    - [-1.0, -1.0, 1.0]
+    - [-1.0, -1.0, -1.0]
+    - [-1.0, 1.0, -1.0]
+    - [-1.0, 1.0, 1.0]
+    - [1.0, -1.0, 1.0]
+    - [1.0, -1.0, -1.0]
+    - [1.0, 1.0, -1.0]
+    - [1.0, 1.0, 1.0]
+
+preprocessing_defaults:
+  downsample: 1
+  center: false
+  perturb: false
+  zrot: false
+  pullback: false
+  toss_comp: 0
+  zshift: 0.0
+  static_ground_shift: 0.0
+
+reset_distribution:
+  source: contactnets/experiments/block3d/gen.py
+  default_position_m: [0.0, 0.0, 0.11004]
+  position_noise_xy_m: 0.09432
+  randomize_z: false
+  default_linear_velocity_mps: [0.0, 1.048, 0.0]
+  linear_velocity_noise_mps: 0.1048
+  enforce_downward_z_velocity: true
+  default_angular_velocity_rps: [0.0, 0.0, 0.0]
+  angular_velocity_noise_rps: 4.0
+  random_orientation: true
+
+termination:
+  min_corner_height_threshold_m: 0.007
+  linear_speed_threshold_mps: 0.05
+  angular_speed_threshold_rps: 0.5
+  settled_time_before_termination_s: 0.05
+  min_com_height_m: -0.2096
+  max_xy_radius_m: 2.0
+
+toss_detection:
+  toss_ball_tolerance: 0.0003
+  toss_ball_horizon: 10
+  fall_ball_horizon: 10
+  falling_horizon: 2
+  release_horizon: 2
+  gravity_for_detection_mps2: -9.81
+  fall_tolerance: 3.0
+  fall_tolerance_mean: 1.0
+  board_edge_y_min_m: -0.05
+  board_edge_y_max_m: 0.6
+  board_top_z_max_m: 0.052
+  release_clearance_m: 0.01
+
+toss_filter:
+  min_duration_s: 0.3
+  min_clearance_min_m: -0.007
+  min_clearance_max_m: 0.007
+  clearance_airforce_height_m: 0.01
+  max_air_force_magnitude_mps2: 4.905
+
+training_defaults:
+  methods: [e2e, poly, deep, deepvertex]
+  split_percent:
+    train: 50
+    valid: 30
+    test: 20
+  epochs: 500
+  batch_size: 1
+  default_training_tosses: 100
+  total_tosses_used_for_training: 200
+  max_training_tosses: 284
+  patience_formula: "int(500.0 / total_tosses) + 12"
+  demo_command: "python demo/experiment.py --method e2e --tosses 100"
+
+legacy_raw_toss_annotations:
+  available_in_contact_nets_repo: false
+  note: legacy_examples_exist_in_DAIRLab_vysics_assets_obselete_config_cn_yaml
+  cube_example_toss_1:
+    start_time:
+      secs: 1655404893
+      nsecs: 899137
+    end_time:
+      secs: 1655404908
+      nsecs: 279948
+    start_frame: 366
+    end_frame: 384
+
+sources:
+  - repo: DAIRLab/contact-nets
+    path: data/params_processed/experiment.json
+  - repo: DAIRLab/contact-nets
+    path: demo/experiment.py
+  - repo: DAIRLab/contact-nets
+    path: contactnets/utils/processing/process_dynamics.py
+  - repo: DAIRLab/contact-nets
+    path: README.md
+  - repo: DAIRLab/vysics
+    path: assets/obselete/config_cn.yaml

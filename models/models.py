@@ -314,3 +314,12 @@ class ModelMixedInput(nn.Module):
         
     def reset(self, batch_size):
         self.init_rnn(batch_size)
+
+    def set_attention_capture(self, enabled: bool):
+        if self.transformer_model is not None:
+            self.transformer_model.set_attention_capture(enabled)
+
+    def get_attention_maps(self):
+        if self.transformer_model is None:
+            return []
+        return self.transformer_model.get_attention_maps()

@@ -28,6 +28,7 @@ from rl_games.torch_runner import Runner
 
 from envs.rlgames_env_wrapper import register_env, RLGPUAlgoObserver
 from envs.neural_environment import NeuralEnvironment
+from utils.checkpoint_utils import load_neural_model_checkpoint
 from utils.python_utils import set_random_seed, get_time_stamp  
 
 def get_args():
@@ -174,10 +175,9 @@ def construct_env(env_specs, device, args):
         
     # Load neural model and neural_solver_cfg if env_mode is "neural"
     if env_specs['env_mode'] == "neural":
-        neural_model, robot_name = torch.load(
-            env_specs['model_path'], 
-            map_location=device, 
-            weights_only=False
+        neural_model, robot_name, _ = load_neural_model_checkpoint(
+            env_specs['model_path'],
+            map_location=device,
         )
         neural_model.to(device)
         neural_model.fix_input_names()

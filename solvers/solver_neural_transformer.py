@@ -45,10 +45,13 @@ class TransformerNeuralSolver(StatefulNeuralSolver):
                 'states_embedding': torch.zeros_like(self.states_embedding).unsqueeze(1),
                 'joint_f': torch.zeros_like(self.joint_f[..., -self.model_joint_f_dim:]).unsqueeze(1),
                 "gravity_dir": torch.zeros_like(self.gravity_dir).unsqueeze(1),
+                "_inputs_already_in_model_frame": torch.ones_like(
+                    self.inputs_already_in_model_frame
+                ).unsqueeze(1),
                 **self.contacts
             }
         else:
-            # assemble the model inputs in world frame
+            # Assemble history in the configured model frame.
             model_inputs = torch.utils.data.default_collate(self.states_history)
             for k in model_inputs:
                 model_inputs[k] = model_inputs[k].permute(1, 0, 2)

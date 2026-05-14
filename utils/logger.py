@@ -13,8 +13,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from torch.utils.tensorboard import SummaryWriter
-import wandb
+try:
+    from torch.utils.tensorboard import SummaryWriter
+except ImportError:
+    SummaryWriter = None
+
+try:
+    import wandb
+except ImportError:
+    wandb = None
 
 class Logger:
     def __init__(self):
@@ -23,9 +30,13 @@ class Logger:
         self.wandb_logs = {}
     
     def init_tensorboard(self, summary_log_dir):
-        self.tensorboard_writer = SummaryWriter(summary_log_dir)
+        if SummaryWriter is not None:
+            self.tensorboard_writer = SummaryWriter(summary_log_dir)
         
     def init_wandb(self, wandb_project, wandb_name):
+        if wandb is None:
+            self.wandb = None
+            return
         self.wandb = wandb.init(
             project = wandb_project,
             name = wandb_name

@@ -1,0 +1,24 @@
+sweep:
+  mode: grid
+  parameters:
+    # All three parameters are isotropic scalar values.
+    physics_metric.inertia_kg_m2: [0.00065, 0.00081, 0.00097]
+    physics_metric.friction_coefficient: [0.1, 0.18, 0.26]
+    physics_metric.restitution: [0.0, 0.125, 0.25]
+
+evaluation:
+  trajectory_selection: strided
+  max_trajectories: 16
+  horizon: 32
+
+metric:
+  component_weights:
+    position: 1.0
+    orientation: 1.0
+    linear_velocity: 1.0
+    angular_velocity: 1.0
+  scales:
+    position_m: auto_half_extent
+    orientation_rad: 1.0
+    linear_velocity_mps: auto_rms
+    angular_velocity_rps: auto_rms

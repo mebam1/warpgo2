@@ -42,6 +42,8 @@ class CausalSelfAttention(nn.Module):
         self.n_head = config.n_head
         self.n_embd = config.n_embd
         self.dropout = config.dropout
+        self.capture_attention = False
+        self.last_attention_map = None
         # flash attention make GPU go brrrrr but support is only in PyTorch >= 2.0
         self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention')
         if not self.flash:
@@ -64,7 +66,7 @@ class CausalSelfAttention(nn.Module):
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
 
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
-        if self.flash:
+        if self.flash and not self.capture_attention:
             # efficient attention using Flash Attention CUDA kernels
             y = torch.nn.functional.scaled_dot_product_attention(
                 q, k, v, 
@@ -72,11 +74,22 @@ class CausalSelfAttention(nn.Module):
                 dropout_p=self.dropout if self.training else 0, 
                 is_causal=True
             )
+            self.last_attention_map = None
         else:
             # manual implementation of attention
             att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
-            att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
+            if hasattr(self, 'bias'):
+                causal_mask = self.bias[:, :, :T, :T]
+            else:
+                causal_mask = torch.tril(
+                    torch.ones(T, T, device=x.device, dtype=torch.bool)
+                ).view(1, 1, T, T)
+            att = att.masked_fill(causal_mask == 0, float('-inf'))
             att = F.softmax(att, dim=-1)
+            if self.capture_attention:
+                self.last_attention_map = att.detach().cpu()
+            else:
+                self.last_attention_map = None
             att = self.attn_dropout(att)
             y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
         y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
@@ -197,6 +210,15 @@ class GPT(nn.Module):
 
         output_features = self.lm_head(x)
         return output_features
+
+    def set_attention_capture(self, enabled: bool):
+        for block in self.transformer.h:
+            block.attn.capture_attention = enabled
+            if not enabled:
+                block.attn.last_attention_map = None
+
+    def get_attention_maps(self):
+        return [block.attn.last_attention_map for block in self.transformer.h]
 
         # if targets is not None:
         #     # if we are given some desired targets also calculate the loss

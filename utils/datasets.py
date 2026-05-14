@@ -23,6 +23,28 @@ from torch.utils.data import Dataset
 import numpy as np
 
 from utils.commons import DATASET_MODES
+from utils import state_convention
+
+
+def _normalize_state_array_if_needed(data, key, data_attrs):
+    if key not in {"states", "next_states"} or data.shape[-1] < 13:
+        return data
+
+    attr_convention = state_convention.infer_free_joint_state_convention_from_attrs(
+        data_attrs
+    )
+    if (
+        attr_convention == state_convention.UNKNOWN_STATE_CONVENTION
+        and data.ndim != 3
+    ):
+        return data
+
+    states = torch.from_numpy(data)
+    normalized_states, _ = state_convention.normalize_free_joint_states(
+        states,
+        attr_convention,
+    )
+    return normalized_states.cpu().numpy()
 
 class BatchTransitionDataset:
     def __init__(
@@ -50,6 +72,7 @@ class BatchTransitionDataset:
         mode = dataset['data'].attrs['mode']
 
         assert mode in DATASET_MODES
+        data_attrs = dataset['data'].attrs
 
         # load dataset
         total_transitions = dataset['data'].attrs['total_transitions']
@@ -59,6 +82,7 @@ class BatchTransitionDataset:
         if mode == 'transition':
             for key in dataset['data'].keys():
                 data = dataset['data'][key][()].astype('float32')
+                data = _normalize_state_array_if_needed(data, key, data_attrs)
                 # flatten feature dims if needed (e.g. contact info)
                 data = data.reshape(total_transitions, -1)
                 self.dataset[key] = torch.tensor(
@@ -77,6 +101,7 @@ class BatchTransitionDataset:
                     self.traj_lengths = dataset['data'][key][()].astype('int32')
                     continue
                 data = dataset['data'][key][()].astype('float32') # shape (T, B, dim1, dim2, ...)
+                data = _normalize_state_array_if_needed(data, key, data_attrs)
                 data = np.swapaxes(data, 0, 1) # shape (B, T, dim1, dim2, ...)
                 # flatten feature dims if needed (e.g. contact info)
                 data = data.reshape(total_transitions, -1)
@@ -130,6 +155,7 @@ class TrajectoryDataset(Dataset):
         dataset = h5py.File(hdf5_dataset_path, 'r', swmr=True, libver='latest')
 
         mode = dataset['data'].attrs['mode']
+        data_attrs = dataset['data'].attrs
 
         assert mode == 'trajectory', \
             "TrajectoryDataset requires the dataset model to be 'trajectory'."
@@ -149,6 +175,7 @@ class TrajectoryDataset(Dataset):
                 self.traj_lengths = dataset['data'][key][:num_trajectories].astype('int32')
                 continue
             data = dataset['data'][key][:, :num_trajectories, ...].astype('float32') # shape (T, B, dim1, dim2, ...)
+            data = _normalize_state_array_if_needed(data, key, data_attrs)
             data = np.swapaxes(data, 0, 1) # shape (B, T, dim1, dim2, ...)
             if key == "joint_acts": # compatibility with the warp dataset
                 key = "joint_f"

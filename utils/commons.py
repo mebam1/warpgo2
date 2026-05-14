@@ -23,7 +23,17 @@ DATASET_MODES = ['transition', 'trajectory']
 CONTACT_FREE_DEPTH = 10000.
 CONTACT_DEPTH_LOWER_RATIO = -2.
 CONTACT_DEPTH_UPPER_RATIO = 4.
-MIN_CONTACT_EVENT_THRESHOLD = 0.12
+DEFAULT_BLOCK_HALF_EXTENT_M = 0.0524
+MIN_CONTACT_EVENT_THRESHOLD_HALF_EXTENT_RATIO = 0.04
+
+
+def get_min_contact_event_threshold(half_extent: float) -> float:
+    return MIN_CONTACT_EVENT_THRESHOLD_HALF_EXTENT_RATIO * float(half_extent)
+
+
+MIN_CONTACT_EVENT_THRESHOLD = get_min_contact_event_threshold(
+    DEFAULT_BLOCK_HALF_EXTENT_M
+)
 
 JOINT_Q_MIN = {
     'Cartpole': np.array([-1., -np.pi]),

@@ -33,6 +33,27 @@ from envs.newton_envs.environment import SolverType
 from utils import warp_utils
 from utils.time_report import TimeReport, TimeProfiler
 
+BOX_CONTACT_POINT_COUNT = 14
+
+
+@wp.func
+def get_box_contact_point(point_id: int, half_extent: wp.vec3):
+    if point_id < 8:
+        return get_box_vertex(point_id, half_extent)
+    face_id = point_id - 8
+    if face_id == 0:
+        return wp.vec3(half_extent[0], 0.0, 0.0)
+    if face_id == 1:
+        return wp.vec3(-half_extent[0], 0.0, 0.0)
+    if face_id == 2:
+        return wp.vec3(0.0, half_extent[1], 0.0)
+    if face_id == 3:
+        return wp.vec3(0.0, -half_extent[1], 0.0)
+    if face_id == 4:
+        return wp.vec3(0.0, 0.0, half_extent[2])
+    return wp.vec3(0.0, 0.0, -half_extent[2])
+
+
 @wp.kernel(enable_backward=False)
 def generate_contact_points(
     shape_transform: wp.array(dtype=wp.transform),
@@ -113,9 +134,9 @@ def generate_contact_points(
             contact_idx += 1
 
         if geo_type == GeoType.BOX:
-            # add box corner points
-            for j in range(8):
-                p = get_box_vertex(j, geo_scale)
+            # add box corner points and face-center points
+            for j in range(BOX_CONTACT_POINT_COUNT):
+                p = get_box_contact_point(j, geo_scale)
                 contact_shape0[contact_idx] = shape_offset + i
                 contact_shape1[contact_idx] = ground_shape_index
                 contact_point0[contact_idx] = wp.transform_point(shape_tf, p)
@@ -278,7 +299,7 @@ class FixedContactEnvironment:
             elif geo_type == GeoType.CAPSULE:
                 self.num_contacts_per_env += 2
             elif geo_type == GeoType.BOX:
-                self.num_contacts_per_env += 8
+                self.num_contacts_per_env += BOX_CONTACT_POINT_COUNT
             else: # NOTE: temporary use COM for for mesh and cylinder shapes
                 self.num_contacts_per_env += 1
         

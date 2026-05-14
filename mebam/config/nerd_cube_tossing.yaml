@@ -1,0 +1,91 @@
+# NeRD training config for CubeTossingEnv.
+# Paths below assume the repo root is the current working directory.
+#
+# Expected HDF5 trajectory keys under /data:
+# - states                (T, B, 13)
+# - root_body_q           (T, B, 7)
+# - gravity_dir           (T, B, 3)
+# - contact_normals       (T, B, 14, 3)
+# - contact_points_1      (T, B, 14, 3)
+# - contact_depths        (T, B, 14)
+# - contact_masks         (T, B, 14)
+# - contact_thicknesses_0 (T, B, 14)
+# - contact_thicknesses_1 (T, B, 14)
+# - contact_points_0      (T, B, 14, 3)
+# - traj_lengths          (B,)
+
+algorithm:
+  batch_size: 512
+  dataset:
+    max_capacity: 1000000
+    num_data_workers: 0
+    train_dataset_path: mebam/data/nerd/real/0.hdf5
+    valid_datasets:
+      exp_trajectory: mebam/data/nerd/real/0.hdf5
+      passive_trajectory: mebam/data/nerd/real/0.hdf5
+  eval:
+    dataset_path: mebam/data/nerd/real/0.hdf5
+    mode: dataset
+    num_rollouts: 32
+    passive: true
+    rollout_horizon: 16
+  grad_norm: 1.0
+  name: SequenceModelTrainer
+  num_epochs: 1000
+  num_iters_per_epoch: 50
+  num_valid_batches: 4
+  optimizer:
+    lr_end: 1e-4
+    lr_schedule: linear
+    lr_start: 1e-3
+  sample_sequence_length: 8
+  seed: 0
+  truncate_grad: true
+
+env:
+  env_name: CubeTossing
+  neural_solver_cfg:
+    anchor_frame_step: every
+    min_contact_event_threshold: 0.1
+    name: TransformerNeuralSolver
+    num_states_history: 8
+    orientation_prediction_parameterization: quaternion
+    prediction_type: relative
+    states_embedding_type: identical
+    states_frame: body
+  num_envs: 32
+  render: false
+  newton_env_cfg:
+    obs_type: contact_nets
+    random_reset: true
+
+inputs:
+  low_dim:
+  - states_embedding
+  - contact_normals
+  - contact_points_1
+  - contact_depths
+  - gravity_dir
+
+network:
+  encoder:
+    low_dim:
+      activation: relu
+      layer_sizes: []
+      layernorm: false
+  model:
+    mlp:
+      activation: relu
+      layer_sizes:
+      - 64
+      layernorm: false
+    output_tanh: false
+  normalize_input: true
+  normalize_output: true
+  transformer:
+    bias: false
+    block_size: 32
+    dropout: 0.0
+    n_embd: 192
+    n_head: 12
+    n_layer: 6

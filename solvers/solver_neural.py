@@ -14,6 +14,7 @@
 # limitations under the License.
 
 import sys, os
+from contextlib import nullcontext
 
 base_dir = os.path.abspath(
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "../")
@@ -90,7 +91,8 @@ class NeuralSolver(SolverBase):
         anchor_frame_step: Optional[str] = 'every',
         states_embedding_type: Optional[str] = None,
         prediction_type: str = "relative",
-        orientation_prediction_parameterization: str = "quaternion"
+        orientation_prediction_parameterization: str = "quaternion",
+        min_contact_event_threshold: Optional[float] = None,
     ):
         """
         Args:
@@ -117,6 +119,11 @@ class NeuralSolver(SolverBase):
         self.neural_model = neural_model
         if neural_model is not None:
             self.neural_model.to(self.torch_device)
+        self.min_contact_event_threshold = float(
+            MIN_CONTACT_EVENT_THRESHOLD
+            if min_contact_event_threshold is None
+            else min_contact_event_threshold
+        )
 
         self.use_target_prediction = False # for debugging only purpose
 
@@ -126,17 +133,29 @@ class NeuralSolver(SolverBase):
                 "so there has to be at least one articulation in the provided Warp sim model."
             )
 
-        # assume there is one articulation or a duplicated articulations only
+        # Some Newton versions insert empty articulation slots between duplicated
+        # articulations. Count only non-empty intervals as actual environments.
         art_starts = model.articulation_start.numpy()
         q_starts = model.joint_q_start.numpy()
         qd_starts = model.joint_qd_start.numpy()
-        i0 = art_starts[0]
-        i1 = art_starts[1]
+        valid_articulation_ids = [
+            art_id
+            for art_id in range(len(art_starts) - 1)
+            if art_starts[art_id + 1] > art_starts[art_id]
+        ]
+        if len(valid_articulation_ids) == 0:
+            raise ValueError("No non-empty articulation found in the provided model.")
+
+        i0 = art_starts[valid_articulation_ids[0]]
+        if len(valid_articulation_ids) > 1:
+            i1 = art_starts[valid_articulation_ids[1]]
+        else:
+            i1 = model.joint_count
         self.dof_q_per_env = int(q_starts[i1] - q_starts[i0])
         self.dof_qd_per_env = int(qd_starts[i1] - qd_starts[i0])
         self.state_dim = self.dof_q_per_env + self.dof_qd_per_env
-        self.num_envs = model.articulation_count
-        self.num_joints_per_env = model.joint_count // self.num_envs
+        self.num_envs = len(valid_articulation_ids)
+        self.num_joints_per_env = int(i1 - i0)
         self.num_bodies_per_env = model.body_count // self.num_envs
         self.joint_f_dim = self.model.joint_f.shape[0] // self.num_envs
         
@@ -144,12 +163,21 @@ class NeuralSolver(SolverBase):
         
         # verify that all articulations in the Warp model are the same
         # (at least in terms of state dimensionality)
-        for i, j in zip(art_starts[1:], q_starts[:: self.num_joints_per_env]):
-            assert q_starts[i] - j == self.dof_q_per_env
+        for art_id in valid_articulation_ids:
+            joint_start = art_starts[art_id]
+            joint_end = art_starts[art_id + 1]
+            assert q_starts[joint_end] - q_starts[joint_start] == self.dof_q_per_env
+            assert qd_starts[joint_end] - qd_starts[joint_start] == self.dof_qd_per_env
 
         # initialize model input variables
         self.root_body_q = torch.empty(
             (self.num_envs, 7), device=self.torch_device
+        )
+        self.root_body_q[:, :3] = 0.0
+        self.root_body_q[:, 3:7] = 0.0
+        self.root_body_q[:, 6] = 1.0
+        self.states_world = torch.empty(
+            (self.num_envs, self.state_dim), device=self.torch_device
         )
         self.states = torch.empty(
             (self.num_envs, self.state_dim), device=self.torch_device
@@ -159,10 +187,17 @@ class NeuralSolver(SolverBase):
         )
         self.contacts = self.get_abstract_contacts(contacts)
         
+        self.gravity_dir_world = torch.zeros(
+            (self.num_envs, 3), device=self.torch_device
+        )
+        self.gravity_dir_world[:, self.model.up_axis] = -1.0
         self.gravity_dir = torch.zeros(
             (self.num_envs, 3), device=self.torch_device
         )
-        self.gravity_dir[:, self.model.up_axis] = -1.0
+        self.gravity_dir.copy_(self.gravity_dir_world)
+        self.inputs_already_in_model_frame = torch.ones(
+            (self.num_envs, 1), device=self.torch_device
+        )
 
         self.joint_f_wp = None # shape (num_envs * joint_f_dim, )
 
@@ -298,11 +333,13 @@ class NeuralSolver(SolverBase):
         )
         self._update_states(state_in, contacts, control.joint_f)
 
-        torch_stream = wp.stream_to_torch(self.device)
+        if wp.get_device(self.device).is_cuda:
+            stream_context = torch.cuda.stream(wp.stream_to_torch(self.device))
+        else:
+            stream_context = nullcontext()
+
         # NOTE[Jie]: need to remove no_grad if we want the differentiability
-        with torch.no_grad(), torch.cuda.stream(
-            torch_stream
-        ): 
+        with torch.no_grad(), stream_context:
             self.before_model_forward()
             # get the inputs for neural model
             model_inputs = self.get_neural_model_inputs()
@@ -337,15 +374,62 @@ class NeuralSolver(SolverBase):
     """
 
     def _update_states(self, warp_states: State, contacts: Contacts, joint_f):
-        self.acquire_states_to_torch(warp_states, self.states)
-        self.wrap2PI(self.states)
+        self.acquire_states_to_torch(warp_states, self.states_world)
+        self.wrap2PI(self.states_world)
         self.root_body_q = wp.to_torch(
             warp_states.body_q
         )[0::self.num_bodies_per_env, :]
         if self.joint_f_dim > 0:
             self.joint_f = wp.to_torch(joint_f).view(
                 self.num_envs, self.joint_f_dim)
-        self.contacts = self.get_abstract_contacts(contacts)
+        self._update_model_frame_states()
+        self.contacts = self._convert_runtime_contacts_to_model_frame(
+            self.get_abstract_contacts(contacts)
+        )
+
+    def _update_model_frame_states(self):
+        self.states.copy_(self.states_world)
+        self.gravity_dir.copy_(self.gravity_dir_world)
+
+        if self.states_frame == "world":
+            return
+
+        translation_only = self.states_frame == "body_translation_only"
+        anchor_frame_body_q = self.root_body_q.unsqueeze(1)
+        self.states.copy_(
+            self._convert_states_w2b(
+                anchor_frame_body_q,
+                self.states_world.unsqueeze(1),
+                translation_only=translation_only,
+            ).squeeze(1)
+        )
+        self.gravity_dir.copy_(
+            self._convert_gravity_w2b(
+                anchor_frame_body_q,
+                self.gravity_dir_world.unsqueeze(1),
+                translation_only=translation_only,
+            ).squeeze(1)
+        )
+
+    def _convert_runtime_contacts_to_model_frame(self, contacts_dict: dict[str, torch.Tensor]):
+        if self.states_frame == "world":
+            return contacts_dict
+
+        translation_only = self.states_frame == "body_translation_only"
+        anchor_frame_body_q = self.root_body_q.view(
+            self.num_envs, 1, 1, 7
+        ).expand(self.num_envs, 1, self.num_contacts_per_env, 7)
+        contact_points_1, contact_normals = self._convert_contacts_w2b(
+            anchor_frame_body_q,
+            contacts_dict["contact_points_1"].unsqueeze(1),
+            contacts_dict["contact_normals"].unsqueeze(1),
+            translation_only=translation_only,
+        )
+
+        contacts_model_frame = dict(contacts_dict)
+        contacts_model_frame["contact_points_1"] = contact_points_1.squeeze(1)
+        contacts_model_frame["contact_normals"] = contact_normals.squeeze(1)
+        return contacts_model_frame
 
     def get_contact_masks(
         self, 
@@ -356,8 +440,8 @@ class NeuralSolver(SolverBase):
         # compute the threhold to a detect contact event
         contact_event_threshold = CONTACT_DEPTH_UPPER_RATIO * (contact_thickness0 + contact_thickness1)
         contact_event_threshold = torch.where(
-            contact_event_threshold < MIN_CONTACT_EVENT_THRESHOLD,
-            MIN_CONTACT_EVENT_THRESHOLD,
+            contact_event_threshold < self.min_contact_event_threshold,
+            self.min_contact_event_threshold,
             contact_event_threshold
         )
         
@@ -410,21 +494,36 @@ class NeuralSolver(SolverBase):
         }
     
     def process_neural_model_inputs(self, model_inputs):
-        # convert frame
-        (
-            model_inputs["states"],
-            model_inputs["next_states"],
-            model_inputs["contact_points_1"],
-            model_inputs["contact_normals"],
-            model_inputs["gravity_dir"]
-        ) = self.convert_coordinate_frame(
-            model_inputs["root_body_q"],
-            model_inputs["states"],
-            model_inputs.get("next_states", None),
-            model_inputs.get("contact_points_1", None),
-            model_inputs.get("contact_normals", None),
-            model_inputs.get("gravity_dir", None)
+        model_inputs["next_states"] = model_inputs.get("next_states", None)
+        model_inputs["contact_points_1"] = model_inputs.get("contact_points_1", None)
+        model_inputs["contact_normals"] = model_inputs.get("contact_normals", None)
+        model_inputs["gravity_dir"] = model_inputs.get("gravity_dir", None)
+
+        inputs_already_in_model_frame = model_inputs.pop(
+            "_inputs_already_in_model_frame", None
         )
+        already_in_model_frame = False
+        if inputs_already_in_model_frame is not None:
+            already_in_model_frame = bool(
+                torch.all(inputs_already_in_model_frame > 0.5).item()
+            )
+
+        if not already_in_model_frame:
+            # convert frame
+            (
+                model_inputs["states"],
+                model_inputs["next_states"],
+                model_inputs["contact_points_1"],
+                model_inputs["contact_normals"],
+                model_inputs["gravity_dir"]
+            ) = self.convert_coordinate_frame(
+                model_inputs["root_body_q"],
+                model_inputs["states"],
+                model_inputs["next_states"],
+                model_inputs["contact_points_1"],
+                model_inputs["contact_normals"],
+                model_inputs["gravity_dir"]
+            )
 
         # post processing
         self.wrap2PI(model_inputs["states"])
@@ -474,13 +573,14 @@ class NeuralSolver(SolverBase):
     """
 
     def get_neural_model_inputs(self):
-        # assemble the model inputs in world frame
+        # Assemble runtime tensors directly in the configured model frame.
         model_inputs = {
             "root_body_q": self.root_body_q,
             "states": self.states,
             "states_embedding": self.states_embedding,
             "joint_f": self.joint_f[..., -self.model_joint_f_dim:],
             "gravity_dir": self.gravity_dir,
+            "_inputs_already_in_model_frame": self.inputs_already_in_model_frame,
             **self.contacts
         }
         for k in model_inputs.keys():
@@ -908,13 +1008,13 @@ class NeuralSolver(SolverBase):
                 states_body[:, 3:7], 
                 states_body[:, self.dof_q_per_env:self.dof_q_per_env + 3], 
                 states_body[:, self.dof_q_per_env + 3:self.dof_q_per_env + 6]
-            ) = torch_utils.convert_states_w2b(
+            ) = torch_utils.convert_free_states_com_w2b(
                     body_frame_pos,
                     body_frame_quat,
                     p = states[:, 0:3],
                     quat = states[:, 3:7],
-                    omega = states[:, self.dof_q_per_env:self.dof_q_per_env + 3],
-                    nu = states[:, self.dof_q_per_env + 3:self.dof_q_per_env + 6]
+                    lin_vel = states[:, self.dof_q_per_env:self.dof_q_per_env + 3],
+                    ang_vel = states[:, self.dof_q_per_env + 3:self.dof_q_per_env + 6]
                 )
             
         return states_body.view(*shape)
@@ -1050,13 +1150,13 @@ class NeuralSolver(SolverBase):
                     states_world[:, 3:7], 
                     states_world[:, self.dof_q_per_env:self.dof_q_per_env + 3], 
                     states_world[:, self.dof_q_per_env + 3:self.dof_q_per_env + 6] 
-                ) = torch_utils.convert_states_b2w(
+                ) = torch_utils.convert_free_states_com_b2w(
                         anchor_frame_pos,
                         anchor_frame_quat,
                         p = states[:, 0:3],
                         quat = states[:, 3:7],
-                        omega = states[:, self.dof_q_per_env:self.dof_q_per_env + 3],
-                        nu = states[:, self.dof_q_per_env + 3:self.dof_q_per_env + 6]
+                        lin_vel = states[:, self.dof_q_per_env:self.dof_q_per_env + 3],
+                        ang_vel = states[:, self.dof_q_per_env + 3:self.dof_q_per_env + 6]
                     )
             return states_world.view(*shape)
         

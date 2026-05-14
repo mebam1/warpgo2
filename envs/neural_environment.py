@@ -196,6 +196,14 @@ class NeuralEnvironment():
     @property
     def joint_types(self):
         return self.solver_neural.joint_types
+
+    @property
+    def integrator_gt(self):
+        return self.solver_gt
+
+    @property
+    def integrator_neural(self):
+        return self.solver_neural
     
     @property
     def device(self):

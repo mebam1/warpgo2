@@ -40,7 +40,10 @@ class StatefulNeuralSolver(NeuralSolver):
     def reset_states_history(self):
         self.states_history = deque(maxlen=self.num_states_history)
         for _ in range(self.num_states_history):
-            contacts = self.get_abstract_contacts(self.model)
+            contacts = {
+                key: torch.zeros_like(value)
+                for key, value in self.contacts.items()
+            }
             self.states_history.append(
                 {
                     'root_body_q': 
@@ -59,11 +62,15 @@ class StatefulNeuralSolver(NeuralSolver):
                             device=self.torch_device
                         ),
                     'joint_f': 
-                        torch.zeros((self.num_envs, self.model_joint_f_dimjoint_f_dim), 
+                        torch.zeros((self.num_envs, self.model_joint_f_dim),
                             device=self.torch_device
                         ),
                     'gravity_dir':
                         torch.zeros((self.num_envs, 3),
+                            device=self.torch_device
+                        ),
+                    '_inputs_already_in_model_frame':
+                        torch.ones((self.num_envs, 1),
                             device=self.torch_device
                         ),
                     **contacts
@@ -83,11 +90,13 @@ class StatefulNeuralSolver(NeuralSolver):
                 "states_embedding": self.states_embedding.clone(),
                 "joint_f": self.joint_f[..., -self.model_joint_f_dim:].clone(),
                 "gravity_dir": self.gravity_dir.clone(),
+                "_inputs_already_in_model_frame":
+                    self.inputs_already_in_model_frame.clone(),
                 **self.contacts
             })
 
     def get_neural_model_inputs(self):
-        # assemble the model inputs in world frame
+        # Assemble history in the configured model frame.
         model_inputs = torch.utils.data.default_collate(self.states_history)
         for k in model_inputs:
             model_inputs[k] = model_inputs[k].permute(1, 0, 2)
