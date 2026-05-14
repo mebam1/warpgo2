@@ -153,8 +153,10 @@ class RlgamesEnvironment(vecenv.IVecEnv):
         self.neural_env.render()
 
     def clamp_actions(self, actions, action_limits):
-        actions = torch.max(torch.min(actions, action_limits[:, 1]), 
-                            action_limits[:, 0])
+        return torch.max(
+            torch.min(actions, action_limits[:, 1]),
+            action_limits[:, 0],
+        )
 
     def step(self, actions):
         """
@@ -165,7 +167,7 @@ class RlgamesEnvironment(vecenv.IVecEnv):
         """
         self.extras = {}
         
-        self.clamp_actions(actions, wp.to_torch(self.action_limits_wp))
+        actions = self.clamp_actions(actions, wp.to_torch(self.action_limits_wp))
 
         self.action_buf.assign(wp.array(actions))
         
@@ -199,16 +201,17 @@ class RlgamesEnvironment(vecenv.IVecEnv):
             outputs=[self.rew_buf],
             device=self.device,
         )
-        
+
+        dones = wp.to_torch(self.done_buf)
+        if dones.any().item():
+            self.neural_env.reset_envs(self.done_buf)
+
         self.render()
         obs = self.get_observations()
-
-        self.neural_env.reset_envs(self.done_buf)
 
         self._step_count += 1
 
         rewards = wp.to_torch(self.rew_buf)
-        dones = wp.to_torch(self.done_buf)
 
         # get extras
         self.neural_env.get_extras(self.extras)

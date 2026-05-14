@@ -272,7 +272,8 @@ def go2_cost_termination(
         or xy_radius > max_xy_radius
     )
 
-    progress_reward = forward_reward_scale * local_lin_vel[0]
+    progress_reward = wp.exp(-((lin_vel[0] + 1.0) ** 2.0 + lin_vel[1] ** 2.0))
+    progress_reward *= forward_reward_scale
     reward = progress_reward
 
     if not terminated_flag:
@@ -332,8 +333,8 @@ class Go2Environment(Environment):
         base_linear_velocity_noise_mps=0.05,
         joint_velocity_noise_rps=0.1,
         min_base_height=0.05,
-        min_up_dot=0.15,
-        max_xy_radius=10.0,
+        min_up_dot=0.8,
+        max_xy_radius=10000.0,
         forward_reward_scale=1.0,
         upright_reward_scale=0.05,
         heading_reward_scale=0.05,

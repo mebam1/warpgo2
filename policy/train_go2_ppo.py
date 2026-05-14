@@ -45,8 +45,11 @@ class Go2PolicyEnvironment:
         env_cfg = dict(newton_env_cfg or {})
         env_cfg["num_envs"] = num_envs
         env_cfg["device"] = device
-        env_cfg["use_graph_capture"] = use_graph_capture
         env_cfg["setup_viewer"] = False
+
+        # Rendering and selective per-env resets do not stay in sync reliably when
+        # the simulation graph is captured ahead of time.
+        env_cfg["use_graph_capture"] = use_graph_capture and not render
 
         if not render:
             env_cfg.setdefault("render_mode", RenderMode.NONE)
@@ -340,6 +343,15 @@ def construct_env(rl_cfg: dict, args: argparse.Namespace) -> Go2PolicyEnvironmen
 
 
 def construct_rlg_config(rl_cfg: dict) -> dict:
+    other_params = rl_cfg["rl"].get("other_params", {})
+    algo_config = deepcopy(rl_cfg["rl"]["config"])
+    player_config = dict(algo_config.get("player", {}))
+    legacy_deterministic = player_config.pop("determenistic", None)
+    if legacy_deterministic is not None and "deterministic" not in player_config:
+        player_config["deterministic"] = legacy_deterministic
+    if "player" in algo_config or player_config:
+        algo_config["player"] = player_config
+
     return {
         "params": {
             "seed": rl_cfg["seed"],
@@ -350,14 +362,14 @@ def construct_rlg_config(rl_cfg: dict) -> dict:
                 "separate": False,
                 "space": {
                     "continuous": {
-                        "mu_activation": "tanh",
+                        "mu_activation": "None",
                         "sigma_activation": "None",
                         "mu_init": {"name": "default"},
-                        "sigma_init": {"name": "const_initializer", "val": 0.0},
-                        "fixed_sigma": rl_cfg["rl"].get("other_params", {}).get(
-                            "fixed_sigma",
-                            True,
-                        ),
+                        "sigma_init": {
+                            "name": "const_initializer",
+                            "val": other_params.get("sigma_init_val", -1.0),
+                        },
+                        "fixed_sigma": other_params.get("fixed_sigma", True),
                     }
                 },
                 **rl_cfg["rl"]["network"],
@@ -365,11 +377,11 @@ def construct_rlg_config(rl_cfg: dict) -> dict:
             "load_checkpoint": False,
             "load_path": "",
             "config": {
-                **rl_cfg["rl"]["config"],
+                **algo_config,
                 "env_name": "warp",
                 "multi_gpu": False,
                 "ppo": True,
-                "torch_compile": rl_cfg["rl"]["config"].get("torch_compile", False),
+                "torch_compile": algo_config.get("torch_compile", False),
                 "mixed_precision": True,
                 "value_bootstrap": True,
                 "num_actors": rl_cfg["env"]["num_envs"],
