@@ -81,7 +81,12 @@ def parse_args():
     parser.add_argument(
         "--disable-graph-capture",
         action="store_true",
-        help="Disable Warp graph capture.",
+        help="Deprecated: graph capture is currently disabled for this test.",
+    )
+    parser.add_argument(
+        "--print-up-vec",
+        action="store_true",
+        help="Print the base up vector used by Go2 reward computation.",
     )
     return parser.parse_args()
 
@@ -99,7 +104,7 @@ def build_env(args: argparse.Namespace, rl_cfg: dict) -> Go2Environment:
     env_cfg["device"] = args.device
     env_cfg["render_mode"] = RenderMode.OPENGL if args.render else RenderMode.NONE
     env_cfg["setup_viewer"] = args.render
-    env_cfg["use_graph_capture"] = not args.disable_graph_capture
+    env_cfg["use_graph_capture"] = False
 
     if args.obs_type is not None:
         env_cfg["obs_type"] = args.obs_type
@@ -131,11 +136,40 @@ def compute_rewards(
     return reward, cost, done
 
 
-def print_stats(label: str, reward: torch.Tensor, cost: torch.Tensor, done: torch.Tensor):
+def quat_rotate_xyzw(quat_xyzw: torch.Tensor, vec: torch.Tensor) -> torch.Tensor:
+    quat_xyz = quat_xyzw[:, 0:3]
+    quat_w = quat_xyzw[:, 3:4]
+    two_q_cross_v = 2.0 * torch.cross(quat_xyz, vec, dim=1)
+    return vec + quat_w * two_q_cross_v + torch.cross(quat_xyz, two_q_cross_v, dim=1)
+
+
+def compute_base_up_vec(env: Go2Environment) -> torch.Tensor:
+    joint_q = wp.to_torch(env.state.joint_q).view(env.num_envs, env.dof_q_per_env)
+    quat_xyzw = joint_q[:, 3:7]
+    quat_xyzw = quat_xyzw / torch.clamp(
+        torch.linalg.vector_norm(quat_xyzw, dim=1, keepdim=True),
+        min=1.0e-8,
+    )
+    local_up = torch.zeros((env.num_envs, 3), dtype=torch.float32, device=quat_xyzw.device)
+    local_up[:, 2] = 1.0
+    return quat_rotate_xyzw(quat_xyzw, local_up)
+
+
+def format_vec(vec: torch.Tensor) -> str:
+    return "[" + ", ".join(f"{value:+.6f}" for value in vec.detach().cpu().tolist()) + "]"
+
+
+def print_stats(
+    label: str,
+    reward: torch.Tensor,
+    cost: torch.Tensor,
+    done: torch.Tensor,
+    up_vec: torch.Tensor | None = None,
+):
     reward_cpu = reward.detach().cpu()
     cost_cpu = cost.detach().cpu()
     done_cpu = done.detach().cpu()
-    print(
+    msg = (
         f"{label}: "
         f"reward_mean={reward_cpu.mean().item():+.6f} "
         f"reward_min={reward_cpu.min().item():+.6f} "
@@ -143,6 +177,15 @@ def print_stats(label: str, reward: torch.Tensor, cost: torch.Tensor, done: torc
         f"cost_mean={cost_cpu.mean().item():+.6f} "
         f"done={done_cpu.tolist()}"
     )
+    if up_vec is not None:
+        up_cpu = up_vec.detach().cpu()
+        msg += (
+            f" up_z_mean={up_cpu[:, 2].mean().item():+.6f} "
+            f"up_z_min={up_cpu[:, 2].min().item():+.6f} "
+            f"up_z_max={up_cpu[:, 2].max().item():+.6f} "
+            f"up_vec_env0={format_vec(up_cpu[0])}"
+        )
+    print(msg)
 
 
 def main():
@@ -172,7 +215,8 @@ def main():
             traj_length=max(1, args.steps),
             reward_bias=reward_bias,
         )
-        print_stats("initial_state", reward, cost, done)
+        up_vec = compute_base_up_vec(env) if args.print_up_vec else None
+        print_stats("initial_state", reward, cost, done, up_vec)
 
         cumulative_reward = torch.zeros(env.num_envs, dtype=torch.float32, device=torch_device)
         for step_idx in range(args.steps):
@@ -192,7 +236,8 @@ def main():
                 reward_bias=reward_bias,
             )
             cumulative_reward += reward
-            print_stats(f"step_{step_idx + 1}", reward, cost, done)
+            up_vec = compute_base_up_vec(env) if args.print_up_vec else None
+            print_stats(f"step_{step_idx + 1}", reward, cost, done, up_vec)
 
         print(
             "rollout_summary: "

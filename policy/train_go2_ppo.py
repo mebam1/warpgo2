@@ -47,9 +47,8 @@ class Go2PolicyEnvironment:
         env_cfg["device"] = device
         env_cfg["setup_viewer"] = False
 
-        # Rendering and selective per-env resets do not stay in sync reliably when
-        # the simulation graph is captured ahead of time.
-        env_cfg["use_graph_capture"] = use_graph_capture and not render
+        # Keep graph capture disabled while debugging selective autoreset order.
+        env_cfg["use_graph_capture"] = False
 
         if not render:
             env_cfg.setdefault("render_mode", RenderMode.NONE)
@@ -238,6 +237,17 @@ def parse_args():
         help="Override newton_env_cfg.obs_type.",
     )
     parser.add_argument(
+        "--print-up-vec",
+        action="store_true",
+        help="Print Go2 base up-vector stats during rl_games training.",
+    )
+    parser.add_argument(
+        "--print-up-vec-interval",
+        type=int,
+        default=1,
+        help="Print up-vector stats every N wrapper steps when --print-up-vec is set.",
+    )
+    parser.add_argument(
         "--playback",
         type=str,
         default=None,
@@ -251,7 +261,7 @@ def parse_args():
     parser.add_argument(
         "--disable-graph-capture",
         action="store_true",
-        help="Disable Warp graph capture.",
+        help="Deprecated: graph capture is currently disabled for Go2 PPO.",
     )
     return parser.parse_args()
 
@@ -326,7 +336,7 @@ def construct_env(rl_cfg: dict, args: argparse.Namespace) -> Go2PolicyEnvironmen
         num_envs=env_cfg["num_envs"],
         device=args.device,
         render=args.render,
-        use_graph_capture=not args.disable_graph_capture,
+        use_graph_capture=False,
         newton_env_cfg=newton_env_cfg,
     )
 
@@ -338,6 +348,8 @@ def construct_env(rl_cfg: dict, args: argparse.Namespace) -> Go2PolicyEnvironmen
         control_steps=env_cfg.get("control_steps", 1),
         image_width=64,
         image_height=64,
+        print_up_vec=args.print_up_vec,
+        print_up_vec_interval=args.print_up_vec_interval,
     )
     return env
 

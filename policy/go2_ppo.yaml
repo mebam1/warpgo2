@@ -1,7 +1,7 @@
 env:
   env_name: Go2
-  num_envs: 64
-  max_episode_length: 1000
+  num_envs: 32
+  max_episode_length: 300
   reward_bias: 0.0
   control_steps: 1
 
@@ -10,27 +10,27 @@ env:
     random_reset: false
     camera_tracking: false
     forward_reward_scale: 1.0
-    upright_reward_scale: 0.05
+    upright_reward_scale: 0.01
     heading_reward_scale: 0.05
     alive_reward: 0.02
-    yaw_rate_penalty_scale: 0.01
+    yaw_rate_penalty_scale: 0.1
     termination_penalty: 1.0
 
 rl:
   config:
     name: Go2PPO
     max_epochs: 200000
-    horizon_length: 128
+    horizon_length: 64
     normalize_input: true
     normalize_value: true
     reward_shaper:
-      scale_value: 0.1
+      scale_value: 0.5
     normalize_advantage: true
     gamma: 0.99
     tau: 0.95
     learning_rate: 0.0003
     lr_schedule: adaptive
-    kl_threshold: 0.008
+    kl_threshold: 0.01
     score_to_win: 1000000
     save_best_after: 25
     save_frequency: 50
@@ -39,8 +39,8 @@ rl:
     entropy_coef: 0.0
     truncate_grads: true
     e_clip: 0.2
-    minibatch_size: 2048
-    mini_epochs: 4
+    minibatch_size: 16
+    mini_epochs: 3
     critic_coef: 2
     clip_value: false
     seq_length: 8

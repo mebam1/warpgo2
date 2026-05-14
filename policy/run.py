@@ -92,7 +92,7 @@ def parse_args():
     parser.add_argument(
         "--disable-graph-capture",
         action="store_true",
-        help="Disable Warp graph capture.",
+        help="Deprecated: graph capture is currently disabled for Go2 PPO playback.",
     )
     return parser.parse_args()
 
@@ -174,7 +174,9 @@ def build_playback_args(
         obs_type=cli_args.obs_type,
         playback=str(checkpoint_path),
         render=not cli_args.headless,
-        disable_graph_capture=cli_args.disable_graph_capture,
+        disable_graph_capture=True,
+        print_up_vec=False,
+        print_up_vec_interval=1,
     )
 
 

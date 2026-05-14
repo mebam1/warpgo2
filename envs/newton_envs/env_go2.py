@@ -123,17 +123,19 @@ def reset_go2(
             rng, -joint_position_noise_rad, joint_position_noise_rad
         )
 
+    # MuJoCo-style free joint qvel ordering:
+    #   [linear velocity in world frame, angular velocity in local body frame]
     for i in range(0, 3):
-        joint_qd[qd_offset + i] = wp.randf(
-            rng,
-            -base_angular_velocity_noise_rps,
-            base_angular_velocity_noise_rps,
-        )
-    for i in range(3, 6):
         joint_qd[qd_offset + i] = wp.randf(
             rng,
             -base_linear_velocity_noise_mps,
             base_linear_velocity_noise_mps,
+        )
+    for i in range(3, 6):
+        joint_qd[qd_offset + i] = wp.randf(
+            rng,
+            -base_angular_velocity_noise_rps,
+            base_angular_velocity_noise_rps,
         )
     for i in range(joint_qd_start, dof_qd_per_env):
         joint_qd[qd_offset + i] = wp.randf(
@@ -188,19 +190,17 @@ def compute_observations_go2_policy(
         joint_q[q_offset + 5],
         joint_q[q_offset + 6],
     )
-    ang_vel = wp.vec3(
+    lin_vel = wp.vec3(
         joint_qd[qd_offset + 0],
         joint_qd[qd_offset + 1],
         joint_qd[qd_offset + 2],
     )
-    lin_vel_twist = wp.vec3(
+    local_ang_vel = wp.vec3(
         joint_qd[qd_offset + 3],
         joint_qd[qd_offset + 4],
         joint_qd[qd_offset + 5],
     )
-    lin_vel = lin_vel_twist - wp.cross(pos, ang_vel)
-    local_lin_vel = wp.quat_rotate_inv(quat_xyzw, lin_vel)
-    local_ang_vel = wp.quat_rotate_inv(quat_xyzw, ang_vel)
+    local_lin_vel = lin_vel # wp.quat_rotate_inv(quat_xyzw, lin_vel)
 
     obs[env_id, 0] = joint_q[q_offset + 2]
     for i in range(4):
@@ -250,19 +250,16 @@ def go2_cost_termination(
         joint_q[q_offset + 5],
         joint_q[q_offset + 6],
     )
-    ang_vel = wp.vec3(
+    lin_vel = wp.vec3(
         joint_qd[qd_offset + 0],
         joint_qd[qd_offset + 1],
         joint_qd[qd_offset + 2],
-    )
-    lin_vel_twist = wp.vec3(
+    ) # 월드 좌표 기준 선속도
+    ang_vel = wp.vec3(
         joint_qd[qd_offset + 3],
         joint_qd[qd_offset + 4],
         joint_qd[qd_offset + 5],
-    )
-    lin_vel = lin_vel_twist - wp.cross(pos, ang_vel)
-    local_lin_vel = wp.quat_rotate_inv(quat_xyzw, lin_vel)
-    local_ang_vel = wp.quat_rotate_inv(quat_xyzw, ang_vel)
+    ) # 월드 좌표 기준 각속도
     up_vec = wp.quat_rotate(quat_xyzw, wp.vec3(0.0, 0.0, 1.0))
     xy_radius = wp.sqrt(pos[0] * pos[0] + pos[1] * pos[1])
 
@@ -272,9 +269,11 @@ def go2_cost_termination(
         or xy_radius > max_xy_radius
     )
 
-    progress_reward = wp.exp(-((lin_vel[0] + 1.0) ** 2.0 + lin_vel[1] ** 2.0))
+    progress_reward = wp.exp(-((lin_vel[0] - 1.0) ** 2.0 + lin_vel[1] ** 2.0))
     progress_reward *= forward_reward_scale
-    reward = progress_reward
+    upright_reward = up_vec[2] * upright_reward_scale
+    yaw_rate_reward = wp.exp(-(ang_vel[2] ** 2.0)) * yaw_rate_penalty_scale
+    reward = progress_reward + upright_reward + yaw_rate_reward
 
     if not terminated_flag:
         reward = reward + alive_reward

@@ -27,6 +27,13 @@ import torch
 import warp as wp
 import numpy as np
 
+try:
+    import gym  # noqa: F401
+except ModuleNotFoundError:
+    import gymnasium as gym
+
+    sys.modules["gym"] = gym
+
 from envs.neural_environment import NeuralEnvironment
 from envs.newton_envs import RenderMode
 from envs.newton_envs.wrapper_utils import (
@@ -68,6 +75,8 @@ class RlgamesEnvironment(vecenv.IVecEnv):
         control_steps: int = 1,
         image_width: int = 128,
         image_height: int = 128,
+        print_up_vec: bool = False,
+        print_up_vec_interval: int = 1,
     ):
         self.neural_env = env
         self.num_envs = self.neural_env.num_envs
@@ -97,6 +106,8 @@ class RlgamesEnvironment(vecenv.IVecEnv):
         self._step_count = 0
         self.reward_scale = reward_scale
         self.reward_bias = reward_bias
+        self.print_up_vec = print_up_vec
+        self.print_up_vec_interval = max(1, int(print_up_vec_interval))
 
         self.extras = {}
         self.obs_dict = {}
@@ -141,6 +152,53 @@ class RlgamesEnvironment(vecenv.IVecEnv):
             self.obs_buf, split_up_tiles=True, mode="rgb", use_uint8=True
         )
         return wp.to_torch(self.obs_buf)
+
+    def _compute_base_up_vec(self):
+        if not hasattr(self.neural_env, "state") or not hasattr(self.neural_env, "dof_q_per_env"):
+            return None
+
+        joint_q = wp.to_torch(self.neural_env.state.joint_q).view(
+            self.num_envs,
+            self.neural_env.dof_q_per_env,
+        )
+        quat_xyzw = joint_q[:, 3:7]
+        quat_xyzw = quat_xyzw / torch.clamp(
+            torch.linalg.vector_norm(quat_xyzw, dim=1, keepdim=True),
+            min=1.0e-8,
+        )
+
+        quat_xyz = quat_xyzw[:, 0:3]
+        quat_w = quat_xyzw[:, 3:4]
+        local_up = torch.zeros((self.num_envs, 3), dtype=quat_xyzw.dtype, device=quat_xyzw.device)
+        local_up[:, 2] = 1.0
+        two_q_cross_v = 2.0 * torch.cross(quat_xyz, local_up, dim=1)
+        return local_up + quat_w * two_q_cross_v + torch.cross(quat_xyz, two_q_cross_v, dim=1)
+
+    def _maybe_print_up_vec(self, rewards, dones):
+        if not self.print_up_vec or self._step_count % self.print_up_vec_interval != 0:
+            return
+
+        up_vec = self._compute_base_up_vec()
+        if up_vec is None:
+            print("[up_vec] unavailable: environment does not expose state.joint_q/dof_q_per_env")
+            return
+
+        up_cpu = up_vec.detach().cpu()
+        rewards_cpu = rewards.detach().cpu()
+        dones_cpu = dones.detach().cpu()
+        up_z = up_cpu[:, 2]
+        env0 = ", ".join(f"{value:+.6f}" for value in up_cpu[0].tolist())
+        print(
+            f"[up_vec] step={self._step_count} "
+            f"reward_mean={rewards_cpu.mean().item():+.6f} "
+            f"reward_min={rewards_cpu.min().item():+.6f} "
+            f"reward_max={rewards_cpu.max().item():+.6f} "
+            f"up_z_mean={up_z.mean().item():+.6f} "
+            f"up_z_min={up_z.min().item():+.6f} "
+            f"up_z_max={up_z.max().item():+.6f} "
+            f"done_count={int(dones_cpu.to(torch.int32).sum().item())} "
+            f"up_vec_env0=[{env0}]"
+        )
 
     def reset(self):
         self.neural_env.reset()
@@ -202,16 +260,20 @@ class RlgamesEnvironment(vecenv.IVecEnv):
             device=self.device,
         )
 
+        # Capture the transition observation before autoreset so terminal
+        # trajectories retain the final pre-reset orientation/state.
+        obs = self.get_observations()
+
         dones = wp.to_torch(self.done_buf)
+        rewards = wp.to_torch(self.rew_buf)
+        self._maybe_print_up_vec(rewards, dones)
+
         if dones.any().item():
             self.neural_env.reset_envs(self.done_buf)
 
         self.render()
-        obs = self.get_observations()
 
         self._step_count += 1
-
-        rewards = wp.to_torch(self.rew_buf)
 
         # get extras
         self.neural_env.get_extras(self.extras)
@@ -374,6 +436,8 @@ def register_env(
     control_steps: int = 1,
     image_width: int = 128,
     image_height: int = 128,
+    print_up_vec: bool = False,
+    print_up_vec_interval: int = 1,
     env_name: str = "warp",
 ):
     env = RlgamesEnvironment(
@@ -385,6 +449,8 @@ def register_env(
         control_steps=control_steps,
         image_width=image_width,
         image_height=image_height,
+        print_up_vec=print_up_vec,
+        print_up_vec_interval=print_up_vec_interval,
     )
 
     vecenv.register(
